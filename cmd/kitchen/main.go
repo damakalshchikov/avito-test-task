@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/config"
+	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/repository/postgres"
 	httptransport "github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/transport/http"
 )
 
@@ -42,6 +43,11 @@ func run() error {
 		return err
 	}
 	defer pool.Close()
+
+	if err := postgres.Migrate(ctx, pool); err != nil {
+		return fmt.Errorf("apply migrations: %w", err)
+	}
+	logger.Info("migrations applied")
 
 	handler := httptransport.NewRouter(httptransport.Deps{
 		Logger: logger,
