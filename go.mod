@@ -3,8 +3,10 @@ module github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-da
 go 1.27
 
 require (
+	github.com/getkin/kin-openapi v0.142.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/oapi-codegen/runtime v1.7.0
 )
 
 require (
