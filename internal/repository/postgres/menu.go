@@ -26,6 +26,9 @@ func NewMenuRepo(pool *pgxpool.Pool) *MenuRepo {
 const menuItemColumns = `id, category_id, external_id, name, description, price,
 	is_available, stock_qty, image_url, created_at, updated_at`
 
+const prefixedMenuItemColumns = `mi.id, mi.category_id, mi.external_id, mi.name, mi.description,
+	mi.price, mi.is_available, mi.stock_qty, mi.image_url, mi.created_at, mi.updated_at`
+
 func scanMenuItem(row pgx.Row) (domain.MenuItem, error) {
 	var item domain.MenuItem
 	err := row.Scan(&item.ID, &item.CategoryID, &item.ExternalID, &item.Name, &item.Description,
@@ -91,6 +94,19 @@ func (r *MenuRepo) GetItemByExternalID(ctx context.Context, restaurantID uuid.UU
 	}
 	if err != nil {
 		return domain.MenuItem{}, fmt.Errorf("get menu item: %w", err)
+	}
+	return item, nil
+}
+
+// GetItemByID возвращает позицию меню по внутреннему идентификатору
+func (r *MenuRepo) GetItemByID(ctx context.Context, id uuid.UUID) (domain.MenuItem, error) {
+	query := "SELECT " + menuItemColumns + " FROM menu_items WHERE id = $1"
+	item, err := scanMenuItem(r.pool.QueryRow(ctx, query, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.MenuItem{}, domain.ErrMenuItemNotFound
+	}
+	if err != nil {
+		return domain.MenuItem{}, fmt.Errorf("get menu item by id: %w", err)
 	}
 	return item, nil
 }
