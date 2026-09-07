@@ -20,15 +20,21 @@ run: # Запустить kitchen
 
 test: # Unit-тесты
 	go test ./... -race -count=1
+	@if [ -x "$(PY)" ]; then cd restaurant && .venv/bin/python -m pytest -q; else echo "python venv not found, skip pytest (make py-venv)"; fi
 
 lint: lint-go lint-py # Все линтеры
 
 lint-go: # golangci-lint
 	$(GOLANGCI_LINT) run ./...
 
+lint-py: # ruff + mypy для сервиса заведения
+	@if [ -x "$(PY)" ]; then cd restaurant && .venv/bin/ruff check . && .venv/bin/ruff format --check . && .venv/bin/mypy app; \
+	else echo "python venv not found, run: make py-venv"; exit 1; fi
+
 fmt: # Форматирование
 	gofmt -w ./cmd ./internal
 	$(GOLANGCI_LINT) fmt ./...
+	@if [ -x "$(PY)" ]; then cd restaurant && .venv/bin/ruff format . && .venv/bin/ruff check --fix .; fi
 
 generate: # Кодогенерация сервера из OpenAPI
 	go tool oapi-codegen -config oapi-codegen.yaml api/openapi.yaml
@@ -45,3 +51,8 @@ down: # Остановить стек и удалить данные
 logs: # Логи стека
 	docker compose logs -f kitchen restaurant
 
+
+py-venv: # Создать venv для сервиса заведения с dev-зависимостями
+	python3 -m venv $(PY_VENV)
+	$(PY) -m pip install --upgrade pip
+	$(PY) -m pip install -e "restaurant[dev]"
