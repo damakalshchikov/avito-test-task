@@ -20,3 +20,28 @@ run: # Запустить kitchen
 
 test: # Unit-тесты
 	go test ./... -race -count=1
+
+lint: lint-go lint-py # Все линтеры
+
+lint-go: # golangci-lint
+	$(GOLANGCI_LINT) run ./...
+
+fmt: # Форматирование
+	gofmt -w ./cmd ./internal
+	$(GOLANGCI_LINT) fmt ./...
+
+generate: # Кодогенерация сервера из OpenAPI
+	go tool oapi-codegen -config oapi-codegen.yaml api/openapi.yaml
+
+diagrams: # Рендер PlantUML в SVG
+	docker run --rm -v "$(CURDIR)/docs/diagrams:/work" -w /work plantuml/plantuml:latest -tsvg -o . "*.puml"
+
+up: # Поднять весь стек
+	docker compose up --build -d
+
+down: # Остановить стек и удалить данные
+	docker compose down -v
+
+logs: # Логи стека
+	docker compose logs -f kitchen restaurant
+
