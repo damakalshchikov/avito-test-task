@@ -26,6 +26,9 @@ func NewMenuRepo(pool *pgxpool.Pool) *MenuRepo {
 const menuItemColumns = `id, category_id, external_id, name, description, price,
 	is_available, stock_qty, image_url, created_at, updated_at`
 
+const prefixedMenuItemColumns = `mi.id, mi.category_id, mi.external_id, mi.name, mi.description,
+	mi.price, mi.is_available, mi.stock_qty, mi.image_url, mi.created_at, mi.updated_at`
+
 func scanMenuItem(row pgx.Row) (domain.MenuItem, error) {
 	var item domain.MenuItem
 	err := row.Scan(&item.ID, &item.CategoryID, &item.ExternalID, &item.Name, &item.Description,
