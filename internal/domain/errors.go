@@ -120,6 +120,20 @@ var (
 	ErrMenuItemNotFound = NotFound("Позиция меню не найдена")
 	// ErrSlugTaken: заведение с таким slug уже существует
 	ErrSlugTaken = Conflict(CodeSlugTaken, "Заведение с таким slug уже существует")
+	// ErrCartRestaurantMismatch: в корзине позиции другого заведения
+	ErrCartRestaurantMismatch = Conflict(CodeCartRestaurantMismatch,
+		"В корзине уже есть позиции другого заведения")
+	// ErrCartEmpty: попытка оформить заказ из пустой корзины
+	ErrCartEmpty = Conflict(CodeCartEmpty, "Корзина пуста")
+	// ErrOrderNotFound: заказ не найден или принадлежит другому пользователю
+	ErrOrderNotFound = NotFound("Заказ не найден")
+	// ErrRestaurantUnavailable: заведение не принимает заказы
+	ErrRestaurantUnavailable = Conflict(CodeRestaurantUnavailable,
+		"Заведение сейчас не принимает заказы")
+	// ErrItemsUnavailable: часть позиций нельзя заказать в нужном количестве
+	ErrItemsUnavailable = Conflict(CodeItemsUnavailable, "Некоторые позиции недоступны")
+	// ErrMinOrderAmount: сумма заказа меньше минимальной для заведения
+	ErrMinOrderAmount = Conflict(CodeMinOrderAmount, "Сумма заказа меньше минимальной")
 	// ErrNotImplemented: эндпоинт объявлен в OpenAPI, но ещё не реализован
 	ErrNotImplemented = newError(KindNotImplemented, CodeNotImplemented, "Сценарий ещё не реализован")
 )
