@@ -42,8 +42,12 @@ paths:
     get:
       operationId: listRestaurants
       tags: [client-catalog]
-      summary: Список активных заведений
-      description: Возвращает только заведения со статусом `active`. Поддерживает поиск по названию.
+      summary: Список заведений
+      description: |
+        Каталог заведений с поиском по названию. Возвращает заведения в статусах
+        `active` и `paused`: заведение на паузе остаётся видимым, чтобы пользователь
+        нашёл знакомое место и увидел, что оно временно не принимает заказы.
+        Отключённые платформой (`disabled`) не возвращаются.
       parameters:
         - $ref: '#/components/parameters/Search'
         - $ref: '#/components/parameters/Page'
