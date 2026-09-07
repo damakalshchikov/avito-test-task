@@ -1,0 +1,44 @@
+@startuml c4-component
+!include <C4/C4_Component>
+
+title Авито.Кухня - C4 Level 3: Components сервиса kitchen
+
+System_Ext(webclient, "Web-клиент")
+System_Ext(rest, "Система заведения")
+ContainerDb(db, "PostgreSQL")
+
+Container_Boundary(kitchen, "kitchen (Go)") {
+  Component(router, "transport/http", "chi + сгенерированный strict-server", "Роутинг, middleware аутентификации (X-User-Id / X-Api-Key / X-Admin-Token), маппинг доменных ошибок в HTTP")
+  Component(apigen, "internal/api", "oapi-codegen", "Типы и интерфейс сервера из api/openapi.yaml")
+
+  Component(catalog, "service/catalog", "Go", "Список заведений, меню, синхронизация меню заведением")
+  Component(cart, "service/cart", "Go", "Корзина: одна на пользователя, одно заведение")
+  Component(order, "service/order", "Go", "Создание заказа в транзакции, резерв остатков, переходы статусов, идемпотентность")
+  Component(partner, "service/partner", "Go", "Профиль заведения, онбординг, выдача ключей")
+  Component(domain, "domain", "Go", "Сущности, state machine статусов заказа, доменные ошибки")
+
+  Component(repo, "repository/postgres", "pgx", "Репозитории и UnitOfWork (транзакции), goose-миграции")
+  Component(outbox, "outbox", "Go worker", "Доставка webhook-ов: выборка pending, HMAC, повторы, backoff")
+}
+
+Rel(webclient, router, "Client API")
+Rel(rest, router, "Partner API")
+Rel(router, apigen, "реализует StrictServerInterface")
+Rel(router, catalog, "")
+Rel(router, cart, "")
+Rel(router, order, "")
+Rel(router, partner, "")
+Rel(catalog, domain, "")
+Rel(cart, domain, "")
+Rel(order, domain, "валидирует переходы")
+Rel(partner, domain, "")
+Rel(catalog, repo, "")
+Rel(cart, repo, "")
+Rel(order, repo, "транзакция: заказ + остатки + outbox")
+Rel(partner, repo, "")
+Rel(repo, db, "SQL")
+Rel(outbox, repo, "pending-события")
+Rel(outbox, rest, "POST webhook_url", "HMAC")
+
+SHOW_LEGEND()
+@enduml
