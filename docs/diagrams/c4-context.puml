@@ -1,0 +1,21 @@
+@startuml c4-context
+!include <C4/C4_Context>
+
+title Авито.Кухня - C4 Level 1: System Context
+
+Person(user, "Пользователь", "Заказывает еду через web-клиент Авито.Кухня")
+Person(manager, "Менеджер платформы", "Подключает заведения, выдаёт API-ключи")
+
+System(kitchen, "Авито.Кухня", "Платформа доставки еды: каталог заведений, корзина, заказы, интеграция с заведениями")
+
+System_Ext(webclient, "Web-клиент", "Клиентская часть (вне рамок MVP), работает по Client API")
+System_Ext(restaurant, "Система заведения", "Учётная система партнёра: меню, остатки, кухня. В репозитории - сервис-пример restaurant/")
+
+Rel(user, webclient, "Выбирает блюда, оформляет заказ")
+Rel(webclient, kitchen, "Client API", "HTTPS/JSON, X-User-Id")
+Rel(manager, kitchen, "Admin API", "HTTPS/JSON, X-Admin-Token")
+Rel(restaurant, kitchen, "Синхронизирует меню, принимает и ведёт заказы", "Partner API, X-Api-Key")
+Rel(kitchen, restaurant, "Уведомляет о новых и отменённых заказах", "Webhook, HMAC-подпись")
+
+SHOW_LEGEND()
+@enduml
