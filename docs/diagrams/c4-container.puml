@@ -1,0 +1,31 @@
+@startuml c4-container
+!include <C4/C4_Container>
+
+title Авито.Кухня — C4 Level 2: Containers
+
+Person(user, "Пользователь")
+Person(manager, "Менеджер платформы")
+System_Ext(webclient, "Web-клиент", "Вне рамок MVP")
+
+System_Boundary(platform, "Авито.Кухня (docker compose)") {
+  Container(api, "kitchen API", "Go, chi, oapi-codegen", "Client / Partner / Admin API. Каталог, корзина, заказы, state machine статусов, резервирование остатков")
+  Container(outbox, "Outbox worker", "Go, goroutine внутри kitchen", "Читает outbox_events, отправляет webhook-и с HMAC-подписью, повторы с экспоненциальной задержкой")
+  ContainerDb(db, "PostgreSQL 16", "restaurants, menu_*, users, carts, orders, order_status_history, outbox_events", "Миграции goose применяются при старте")
+}
+
+System_Boundary(partner, "Заведение (пример интеграции)") {
+  Container(rest, "restaurant", "Python, FastAPI", "Сервис-пример: синхронизирует меню, принимает webhook-и, симулирует кухню и двигает статусы")
+  ContainerDb(reststore, "In-memory store", "dict + menu.json", "Упрощение MVP вместо учётной системы заведения")
+}
+
+Rel(user, webclient, "Использует")
+Rel(webclient, api, "Client API", "JSON/HTTPS, X-User-Id")
+Rel(manager, api, "Admin API", "JSON/HTTPS, X-Admin-Token")
+Rel(api, db, "Читает/пишет", "pgx, транзакции")
+Rel(outbox, db, "Выбирает pending-события, помечает delivered/failed", "pgx")
+Rel(outbox, rest, "POST /webhooks/kitchen", "JSON, X-Kitchen-Signature")
+Rel(rest, api, "PUT /partner/v1/menu, PATCH /me,\nPOST /orders/{id}/accept|reject|status,\nGET /orders (polling)", "JSON, X-Api-Key")
+Rel(rest, reststore, "Меню, заказы")
+
+SHOW_LEGEND()
+@enduml
