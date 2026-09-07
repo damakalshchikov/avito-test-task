@@ -11,8 +11,8 @@ type RestaurantStatus string
 
 // Возможные статусы заведения
 const (
-	RestaurantActive RestaurantStatus = "active"
-	RestaurantPaused RestaurantStatus = "paused"
+	RestaurantActive   RestaurantStatus = "active"
+	RestaurantPaused   RestaurantStatus = "paused"
 	RestaurantDisabled RestaurantStatus = "disabled"
 )
 
@@ -49,7 +49,7 @@ type Restaurant struct {
 
 // RestaurantFilter параметры выборки заведений в каталоге
 type RestaurantFilter struct {
-	Search string
+	Search   string
 	Statuses []RestaurantStatus
 	Limit    int
 	Offset   int
