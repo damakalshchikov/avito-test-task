@@ -95,6 +95,19 @@ func (r *MenuRepo) GetItemByExternalID(ctx context.Context, restaurantID uuid.UU
 	return item, nil
 }
 
+// GetItemByID возвращает позицию меню по внутреннему идентификатору
+func (r *MenuRepo) GetItemByID(ctx context.Context, id uuid.UUID) (domain.MenuItem, error) {
+	query := "SELECT " + menuItemColumns + " FROM menu_items WHERE id = $1"
+	item, err := scanMenuItem(r.pool.QueryRow(ctx, query, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.MenuItem{}, domain.ErrMenuItemNotFound
+	}
+	if err != nil {
+		return domain.MenuItem{}, fmt.Errorf("get menu item by id: %w", err)
+	}
+	return item, nil
+}
+
 // UpdateItem применяет точечное изменение позиции заведением
 func (r *MenuRepo) UpdateItem(ctx context.Context, restaurantID uuid.UUID, externalID string,
 	update domain.MenuItemUpdate,
