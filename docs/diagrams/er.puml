@@ -1,0 +1,141 @@
+@startuml er
+title Схема БД Авито.Кухня (PostgreSQL)
+
+hide circle
+skinparam linetype ortho
+
+entity restaurants {
+  * id : uuid <<PK>>
+  --
+  * slug : text <<UQ>>
+  * name : text
+  * description : text
+  * address : text
+  * status : text (active|paused|disabled)
+  * api_key_hash : bytea <<UQ>>
+  webhook_url : text
+  * webhook_secret : text
+  * delivery_fee : bigint
+  * min_order_amount : bigint
+  * created_at, updated_at : timestamptz
+}
+
+entity menu_categories {
+  * id : uuid <<PK>>
+  --
+  * restaurant_id : uuid <<FK>>
+  * name : text
+  * sort_order : integer
+  * created_at, updated_at : timestamptz
+  UQ (restaurant_id, name)
+}
+
+entity menu_items {
+  * id : uuid <<PK>>
+  --
+  * restaurant_id : uuid <<FK>>
+  * category_id : uuid <<FK>>
+  * external_id : text
+  * name : text
+  * description : text
+  * price : bigint
+  * is_available : boolean
+  stock_qty : integer (NULL = без учёта)
+  image_url : text
+  * created_at, updated_at : timestamptz
+  UQ (restaurant_id, external_id)
+}
+
+entity users {
+  * id : uuid <<PK>>
+  --
+  * name : text
+  * phone : text
+  * created_at : timestamptz
+}
+
+entity carts {
+  * id : uuid <<PK>>
+  --
+  * user_id : uuid <<FK,UQ>>
+  * restaurant_id : uuid <<FK>>
+  * created_at, updated_at : timestamptz
+}
+
+entity cart_items {
+  * cart_id : uuid <<PK,FK>>
+  * menu_item_id : uuid <<PK,FK>>
+  --
+  * quantity : integer
+  * created_at, updated_at : timestamptz
+}
+
+entity orders {
+  * id : uuid <<PK>>
+  --
+  * number : bigserial <<UQ>>
+  * user_id : uuid <<FK>>
+  * restaurant_id : uuid <<FK>>
+  * status : text (new|accepted|cooking|ready|delivering|delivered|rejected|cancelled)
+  * delivery_address : text
+  * comment : text
+  * subtotal, delivery_fee, total : bigint
+  reject_reason : text
+  expected_at : timestamptz
+  idempotency_key : text
+  * created_at, updated_at : timestamptz
+  UQ (user_id, idempotency_key)
+}
+
+entity order_items {
+  * id : uuid <<PK>>
+  --
+  * order_id : uuid <<FK>>
+  * menu_item_id : uuid <<FK>>
+  * external_id : text
+  * name : text (snapshot)
+  * price : bigint (snapshot)
+  * quantity : integer
+}
+
+entity order_status_history {
+  * id : bigserial <<PK>>
+  --
+  * order_id : uuid <<FK>>
+  from_status : text
+  * to_status : text
+  * actor : text (user|restaurant|system)
+  reason : text
+  * created_at : timestamptz
+}
+
+entity outbox_events {
+  * id : uuid <<PK>>
+  --
+  * restaurant_id : uuid <<FK>>
+  * order_id : uuid <<FK>>
+  * event_type : text
+  * payload : jsonb
+  * status : text (pending|delivered|failed)
+  * attempts : integer
+  * next_attempt_at : timestamptz
+  last_error : text
+  delivered_at : timestamptz
+  * created_at : timestamptz
+}
+
+restaurants ||--o{ menu_categories
+restaurants ||--o{ menu_items
+menu_categories ||--o{ menu_items
+restaurants ||--o{ carts
+restaurants ||--o{ orders
+restaurants ||--o{ outbox_events
+users ||--o| carts
+users ||--o{ orders
+carts ||--o{ cart_items
+menu_items ||--o{ cart_items
+menu_items ||--o{ order_items
+orders ||--o{ order_items
+orders ||--o{ order_status_history
+orders ||--o{ outbox_events
+@enduml
