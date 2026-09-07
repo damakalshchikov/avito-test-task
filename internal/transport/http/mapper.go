@@ -6,7 +6,9 @@ import (
 
 	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/api"
 	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/domain"
+	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/service/cart"
 	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/service/catalog"
+	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/service/order"
 )
 
 // nullableFrom переводит необязательное значение в nullable-поле API
@@ -78,14 +80,7 @@ func toRestaurantList(list catalog.RestaurantList) api.RestaurantList {
 	for _, restaurant := range list.Items {
 		items = append(items, toRestaurant(restaurant))
 	}
-	return api.RestaurantList{
-		Items: items,
-		Pagination: api.Pagination{
-			Page:     list.Page.Number,
-			PageSize: list.Page.Size,
-			Total:    list.Total,
-		},
-	}
+	return api.RestaurantList{Items: items, Pagination: toPagination(list.Page, list.Total)}
 }
 
 // toMenuItem переводит позицию меню, подставляя в is_available вычисленную доступность
@@ -162,4 +157,143 @@ func value[T any](p *T) T {
 		return zero
 	}
 	return *p
+}
+
+// toCart переводит корзину в схему API
+func toCart(view cart.View) api.Cart {
+	items := make([]api.CartItem, 0, len(view.Cart.Items))
+	for _, item := range view.Cart.Items {
+		items = append(items, api.CartItem{
+			MenuItemId:  item.MenuItem.ID,
+			Name:        item.MenuItem.Name,
+			Price:       item.MenuItem.Price,
+			Quantity:    item.Quantity,
+			IsAvailable: item.MenuItem.Orderable(item.Quantity),
+		})
+	}
+
+	result := api.Cart{Items: items, Subtotal: view.Cart.Subtotal()}
+	if view.Cart.IsEmpty() {
+		return result
+	}
+	restaurantID := view.Cart.RestaurantID
+	result.RestaurantId = &restaurantID
+	result.DeliveryFee = &view.DeliveryFee
+	result.Total = &view.Total
+	return result
+}
+
+// toOrder переводит заказ в клиентскую схему
+func toOrder(order domain.Order) api.Order {
+	items := make([]api.OrderItem, 0, len(order.Items))
+	for _, item := range order.Items {
+		items = append(items, api.OrderItem{
+			MenuItemId: item.MenuItemID,
+			Name:       item.Name,
+			Price:      item.Price,
+			Quantity:   item.Quantity,
+		})
+	}
+
+	result := api.Order{
+		Id:              order.ID,
+		Number:          order.Number,
+		RestaurantId:    order.RestaurantID,
+		RestaurantName:  order.RestaurantName,
+		Status:          api.OrderStatus(order.Status),
+		Items:           items,
+		DeliveryAddress: order.DeliveryAddress,
+		Comment:         optional(order.Comment),
+		Subtotal:        order.Subtotal,
+		DeliveryFee:     order.DeliveryFee,
+		Total:           order.Total,
+		RejectReason:    order.RejectReason,
+		ExpectedAt:      order.ExpectedAt,
+		CreatedAt:       order.CreatedAt,
+		UpdatedAt:       order.UpdatedAt,
+	}
+	if history := toHistory(order.History); history != nil {
+		result.History = &history
+	}
+	return result
+}
+
+// toPartnerOrder переводит заказ в схему для заведения
+func toPartnerOrder(order domain.Order) api.PartnerOrder {
+	items := make([]api.PartnerOrderItem, 0, len(order.Items))
+	for _, item := range order.Items {
+		items = append(items, api.PartnerOrderItem{
+			MenuItemId: item.MenuItemID,
+			ExternalId: item.ExternalID,
+			Name:       item.Name,
+			Price:      item.Price,
+			Quantity:   item.Quantity,
+		})
+	}
+
+	result := api.PartnerOrder{
+		Id:              order.ID,
+		Number:          order.Number,
+		Status:          api.OrderStatus(order.Status),
+		Items:           items,
+		DeliveryAddress: order.DeliveryAddress,
+		Comment:         optional(order.Comment),
+		Customer: &api.OrderCustomer{
+			Name:  order.Customer.Name,
+			Phone: optional(order.Customer.Phone),
+		},
+		Subtotal:     order.Subtotal,
+		DeliveryFee:  order.DeliveryFee,
+		Total:        order.Total,
+		RejectReason: order.RejectReason,
+		ExpectedAt:   order.ExpectedAt,
+		CreatedAt:    order.CreatedAt,
+		UpdatedAt:    order.UpdatedAt,
+	}
+	if history := toHistory(order.History); history != nil {
+		result.History = &history
+	}
+	return result
+}
+
+func toHistory(history []domain.OrderStatusChange) []api.OrderStatusChange {
+	if len(history) == 0 {
+		return nil
+	}
+
+	changes := make([]api.OrderStatusChange, 0, len(history))
+	for _, change := range history {
+		item := api.OrderStatusChange{
+			ToStatus:   api.OrderStatus(change.ToStatus),
+			Actor:      api.OrderStatusChangeActor(change.Actor),
+			Reason:     optional(change.Reason),
+			CreatedAt:  change.CreatedAt,
+			FromStatus: nullable.NewNullNullable[string](),
+		}
+		if change.FromStatus != nil {
+			item.FromStatus = nullable.NewNullableWithValue(string(*change.FromStatus))
+		}
+		changes = append(changes, item)
+	}
+	return changes
+}
+
+func toOrderList(list order.List) api.OrderList {
+	items := make([]api.Order, 0, len(list.Items))
+	for _, o := range list.Items {
+		items = append(items, toOrder(o))
+	}
+	return api.OrderList{Items: items, Pagination: toPagination(list.Page, list.Total)}
+}
+
+func toPartnerOrderList(list order.List) api.PartnerOrderList {
+	items := make([]api.PartnerOrder, 0, len(list.Items))
+	for _, o := range list.Items {
+		items = append(items, toPartnerOrder(o))
+	}
+	return api.PartnerOrderList{Items: items, Pagination: toPagination(list.Page, list.Total)}
+}
+
+func toPagination(page catalog.Page, total int) api.Pagination {
+	return api.Pagination{Page: page.Number, PageSize: page.Size, Total: total}
 }
