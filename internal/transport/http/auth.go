@@ -49,6 +49,15 @@ func RestaurantFrom(ctx context.Context) (domain.Restaurant, bool) {
 	return restaurant, ok
 }
 
+// mustUserID достаёт пользователя из контекста
+func mustUserID(ctx context.Context) (uuid.UUID, error) {
+	id, ok := UserIDFrom(ctx)
+	if !ok {
+		return uuid.Nil, domain.ErrUnauthorized
+	}
+	return id, nil
+}
+
 // mustRestaurant достаёт заведение из контекста
 func mustRestaurant(ctx context.Context) (domain.Restaurant, error) {
 	restaurant, ok := RestaurantFrom(ctx)
