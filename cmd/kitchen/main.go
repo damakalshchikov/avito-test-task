@@ -16,7 +16,9 @@ import (
 
 	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/config"
 	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/repository/postgres"
+	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/service/cart"
 	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/service/catalog"
+	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/service/order"
 	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/service/partner"
 	httptransport "github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/transport/http"
 )
@@ -53,12 +55,18 @@ func run() error {
 
 	restaurantRepo := postgres.NewRestaurantRepo(pool)
 	menuRepo := postgres.NewMenuRepo(pool)
+	cartRepo := postgres.NewCartRepo(pool)
+	orderRepo := postgres.NewOrderRepo(pool)
 
 	handler := httptransport.NewRouter(httptransport.Deps{
-		Logger:     logger,
-		DB:         pool,
-		Catalog:    catalog.New(restaurantRepo, menuRepo),
-		Partner:    partner.New(restaurantRepo, menuRepo),
+		Logger: logger,
+		DB:     pool,
+		Services: httptransport.Services{
+			Catalog: catalog.New(restaurantRepo, menuRepo),
+			Partner: partner.New(restaurantRepo, menuRepo),
+			Cart:    cart.New(cartRepo, menuRepo, restaurantRepo),
+			Order:   order.New(orderRepo, cartRepo),
+		},
 		AdminToken: cfg.AdminToken,
 	})
 

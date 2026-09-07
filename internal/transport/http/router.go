@@ -23,8 +23,7 @@ type Pinger interface {
 type Deps struct {
 	Logger     *slog.Logger
 	DB         Pinger
-	Catalog    CatalogService
-	Partner    PartnerService
+	Services   Services
 	AdminToken string
 }
 
@@ -38,7 +37,7 @@ func NewRouter(deps Deps) http.Handler {
 
 	r.Get("/health", healthHandler(deps.DB))
 
-	server := NewServer(deps.Catalog, deps.Partner)
+	server := NewServer(deps.Services)
 	strict := api.NewStrictHandlerWithOptions(server, nil, api.StrictHTTPServerOptions{
 		// Ошибка разбора запроса
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -50,7 +49,7 @@ func NewRouter(deps Deps) http.Handler {
 
 	api.HandlerWithOptions(strict, api.ChiServerOptions{
 		BaseRouter:  r,
-		Middlewares: []api.MiddlewareFunc{authenticate(deps.Partner, deps.AdminToken)},
+		Middlewares: []api.MiddlewareFunc{authenticate(deps.Services.Partner, deps.AdminToken)},
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			writeError(w, r, domain.Invalid("Некорректные параметры запроса").Wrap(err))
 		},
