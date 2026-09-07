@@ -1,0 +1,78 @@
+@startuml cjm-user
+title CJM пользователя Авито.Кухня
+
+|Пользователь|
+start
+:Открывает Авито.Кухня;
+:Ищет заведение\n(GET /api/v1/restaurants?search=);
+if (Заведения найдены?) then (нет)
+  :Пустой результат:\nпредлагаем убрать фильтр; <<#pink>>
+  stop
+else (да)
+endif
+:Открывает карточку и меню\n(GET /restaurants/{id}/menu);
+note right
+  Позиции с is_available=false
+  показываются, но не добавляются
+end note
+repeat
+  :Добавляет позицию в корзину\n(PUT /api/v1/cart/items);
+  |Платформа|
+  if (Позиция другого заведения?) then (да)
+    :409 cart_restaurant_mismatch; <<#pink>>
+    |Пользователь|
+    :Очищает корзину (DELETE /cart)\nили продолжает с текущим заведением;
+  elseif (Позиция недоступна\nили остатка не хватает?) then (да)
+    :409 items_unavailable\n(available_qty в details); <<#pink>>
+    |Пользователь|
+    :Уменьшает количество\nили выбирает другое блюдо;
+  else (нет)
+    :Корзина обновлена,\nпересчитаны subtotal/total;
+    |Пользователь|
+  endif
+repeat while (Ещё блюда?) is (да) not (нет)
+:Вводит адрес и оформляет заказ\n(POST /api/v1/orders);
+|Платформа|
+if (Заведение на паузе?) then (да)
+  :409 restaurant_unavailable; <<#pink>>
+  |Пользователь|
+  :Выбирает другое заведение;
+  stop
+elseif (Сумма меньше минимальной?) then (да)
+  :409 min_order_amount; <<#pink>>
+  |Пользователь|
+  :Добавляет позиции;
+  stop
+elseif (Остатки изменились\nс момента добавления?) then (да)
+  :409 items_unavailable; <<#pink>>
+  |Пользователь|
+  :Правит корзину;
+  stop
+else (нет)
+  :Транзакция: резерв остатков,\nзаказ в статусе new,\nсобытие order.created в outbox;
+  :201 Created;
+endif
+|Пользователь|
+:Отслеживает статус\n(GET /api/v1/orders/{id});
+|Заведение|
+if (Заведение приняло заказ?) then (нет)
+  :Заказ rejected с причиной; <<#pink>>
+  |Пользователь|
+  :Видит причину, остатки возвращены;
+  stop
+else (да)
+  :accepted → cooking → ready\n→ delivering → delivered;
+endif
+|Пользователь|
+if (Передумал до готовки?) then (да)
+  :Отменяет заказ\n(POST /orders/{id}/cancel);
+  note right
+    Разрешено только в new / accepted,
+    иначе 409 invalid_transition
+  end note
+  :cancelled, остатки возвращены; <<#pink>>
+  stop
+endif
+:Получает заказ (delivered);
+stop
+@enduml
