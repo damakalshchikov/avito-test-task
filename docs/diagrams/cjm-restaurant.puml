@@ -1,0 +1,63 @@
+@startuml cjm-restaurant
+title CJM заведения на Авито.Кухня
+
+|Менеджер платформы|
+start
+:Онбординг заведения\n(POST /admin/v1/restaurants);
+:Передаёт заведению api_key\nи webhook_secret (показываются один раз);
+
+|Заведение|
+:**Подключение**; <<#lightblue>>
+:Интегрирует свою систему:\nX-Api-Key во все запросы;
+:Указывает webhook_url\n(PATCH /partner/v1/me);
+note right
+  Без webhook_url заведение
+  работает через polling
+end note
+:Синхронизирует меню и остатки\n(PUT /partner/v1/menu);
+|Платформа|
+:Upsert по external_id;\nпропавшие позиции → is_available=false;
+|Заведение|
+:Заведение видно пользователям\n(status=active);
+
+:**Работа в течение дня**; <<#lightblue>>
+:Меняет остатки и цены\n(PATCH /partner/v1/menu/items/{external_id});
+:Ставит паузу при наплыве\n(PATCH /me {status: paused})\nи снимает её;
+
+:**Обработка заказа**; <<#lightblue>>
+|Платформа|
+:Пользователь оформил заказ;
+:Outbox-воркер отправляет\nPOST {webhook_url} order.created\nс подписью X-Kitchen-Signature;
+if (Webhook доставлен?) then (нет)
+  :Повторы с экспоненциальной\nзадержкой, до 8 попыток;
+  |Заведение|
+  :Запасной канал: polling\nGET /partner/v1/orders?status=new;
+else (да)
+  |Заведение|
+  :Проверяет подпись,\nдедуплицирует по event_id;
+endif
+if (Может приготовить?) then (нет)
+  :Отклоняет с причиной\n(POST /orders/{id}/reject);
+  |Платформа|
+  :rejected, остатки возвращены,\nпользователь видит причину; <<#pink>>
+  stop
+else (да)
+  :Принимает, указывает expected_at\n(POST /orders/{id}/accept);
+endif
+|Платформа|
+if (Пользователь отменил\nдо начала готовки?) then (да)
+  :Webhook order.cancelled;
+  |Заведение|
+  :Снимает заказ с кухни; <<#pink>>
+  stop
+endif
+|Заведение|
+:Готовит: POST /orders/{id}/status\ncooking → ready;
+:Передаёт курьеру: delivering;
+:Заказ вручён: delivered;
+note right
+  Недопустимый переход
+  → 409 invalid_transition
+end note
+stop
+@enduml
