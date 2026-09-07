@@ -1,0 +1,11 @@
+.git
+.env
+docs
+restaurant/.venv
+restaurant/__pycache__
+**/__pycache__
+**/.mypy_cache
+**/.ruff_cache
+**/.pytest_cache
+*.md
+!api/openapi.yaml
