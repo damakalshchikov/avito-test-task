@@ -1,0 +1,29 @@
+{
+  "categories": [
+    {
+      "name": "Супы",
+      "sort_order": 1,
+      "items": [
+        {"external_id": "soup-borsch", "name": "Борщ с говядиной", "description": "Классический борщ, подаётся со сметаной", "price": 39000, "stock_qty": 20},
+        {"external_id": "soup-tomyum", "name": "Том Ям", "description": "Острый тайский суп с креветками", "price": 59000, "stock_qty": 5}
+      ]
+    },
+    {
+      "name": "Горячее",
+      "sort_order": 2,
+      "items": [
+        {"external_id": "main-burger", "name": "Бургер с котлетой из мраморной говядины", "description": "Картофель фри в комплекте", "price": 69000, "stock_qty": 15},
+        {"external_id": "main-pasta", "name": "Паста карбонара", "description": "Спагетти, гуанчале, пармезан", "price": 54000, "stock_qty": null},
+        {"external_id": "main-steak", "name": "Стейк рибай", "description": "300 г, прожарка medium", "price": 149000, "stock_qty": 2}
+      ]
+    },
+    {
+      "name": "Напитки",
+      "sort_order": 3,
+      "items": [
+        {"external_id": "drink-lemonade", "name": "Домашний лимонад", "description": "0,5 л", "price": 22000, "stock_qty": null},
+        {"external_id": "drink-water", "name": "Вода без газа", "description": "0,5 л", "price": 9000, "stock_qty": 0}
+      ]
+    }
+  ]
+}

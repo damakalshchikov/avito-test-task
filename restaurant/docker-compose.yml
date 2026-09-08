@@ -1,0 +1,18 @@
+services:
+  restaurant:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      RESTAURANT_HTTP_PORT: "8090"
+      RESTAURANT_KITCHEN_BASE_URL: http://kitchen:8080
+      RESTAURANT_API_KEY: ${RESTAURANT_API_KEY:-demo-restaurant-key}
+      RESTAURANT_WEBHOOK_SECRET: ${RESTAURANT_WEBHOOK_SECRET:-demo-webhook-secret}
+      RESTAURANT_PUBLIC_URL: http://restaurant:8090
+      RESTAURANT_AUTO_ACCEPT: ${RESTAURANT_AUTO_ACCEPT:-true}
+      RESTAURANT_SIMULATION_STEP_SECONDS: ${RESTAURANT_SIMULATION_STEP_SECONDS:-5}
+    ports:
+      - "8090:8090"
+    depends_on:
+      kitchen:
+        condition: service_healthy

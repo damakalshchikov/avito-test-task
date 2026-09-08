@@ -1,0 +1,60 @@
+@startuml seq-order-flow
+title Сценарий заказа: от оформления до доставки
+
+actor "Пользователь" as U
+participant "kitchen API" as K
+database "PostgreSQL" as DB
+participant "Outbox worker" as W
+participant "restaurant\n(сервис заведения)" as R
+
+== Оформление ==
+U -> K: POST /api/v1/orders\nX-User-Id, {delivery_address}
+activate K
+K -> DB: BEGIN
+K -> DB: SELECT cart, restaurant FOR UPDATE
+K -> DB: SELECT menu_items ... FOR UPDATE
+alt заведение paused / корзина пуста / остатка не хватает
+  K -> DB: ROLLBACK
+  K --> U: 409 {code, details[available_qty]}
+else всё доступно
+  K -> DB: UPDATE menu_items SET stock_qty = stock_qty - qty
+  K -> DB: INSERT orders (status=new), order_items,\norder_status_history (NULL→new, actor=user)
+  K -> DB: INSERT outbox_events (order.created, pending)
+  K -> DB: DELETE cart_items
+  K -> DB: COMMIT
+  K --> U: 201 Order{status: new}
+end
+deactivate K
+
+== Уведомление заведения ==
+loop каждые N секунд
+  W -> DB: SELECT outbox_events WHERE status='pending'\nAND next_attempt_at <= now() FOR UPDATE SKIP LOCKED
+  W -> R: POST {webhook_url}\nX-Kitchen-Signature: sha256=HMAC(secret, body)
+  alt 2xx
+    W -> DB: UPDATE status='delivered'
+  else ошибка / таймаут
+    W -> DB: attempts+1, next_attempt_at += backoff\n(после 8 попыток status='failed')
+  end
+end
+note over R: Запасной канал:\nGET /partner/v1/orders?status=new
+
+== Обработка заведением ==
+R -> R: Проверка подписи, дедупликация по event_id
+alt может приготовить
+  R -> K: POST /partner/v1/orders/{id}/accept\nX-Api-Key, {expected_at}
+  K -> DB: status new→accepted, history (actor=restaurant)
+  K --> R: 200
+  R -> K: POST .../status {cooking}
+  R -> K: POST .../status {ready}
+  R -> K: POST .../status {delivering}
+  R -> K: POST .../status {delivered}
+else не может
+  R -> K: POST /partner/v1/orders/{id}/reject {reason}
+  K -> DB: status new→rejected,\nUPDATE menu_items SET stock_qty = stock_qty + qty
+  K --> R: 200
+end
+
+== Отслеживание ==
+U -> K: GET /api/v1/orders/{id}
+K --> U: 200 Order{status, history[]}
+@enduml

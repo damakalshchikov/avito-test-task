@@ -1,0 +1,1208 @@
+openapi: 3.0.3
+info:
+  title: Авито.Кухня API
+  version: 1.0.0
+  description: |
+    API платформы доставки еды Авито.Кухня. Три группы эндпоинтов:
+
+    * **Client API** (`/api/v1`) - для web-клиента. Пользователь идентифицируется заголовком `X-User-Id`
+      (аутентификация вне рамок MVP).
+    * **Partner API** (`/partner/v1`) - для заведений. Доступ по API-ключу в заголовке `X-Api-Key`.
+    * **Admin API** (`/admin/v1`) - онбординг заведений, защищён статическим токеном `X-Admin-Token`.
+
+    Все денежные суммы - целые числа в минорных единицах валюты (копейках).
+
+    Помимо запросов от заведения, платформа сама уведомляет заведение о событиях заказа:
+    `POST {webhook_url}` с телом `WebhookEvent` и подписью `X-Kitchen-Signature: sha256=<HMAC-SHA256(webhook_secret, body)>`.
+    Доставка гарантируется через outbox с повторами; заведение должно дедуплицировать события по `event_id`.
+
+servers:
+  - url: http://localhost:8080
+    description: Локальный запуск через docker compose
+
+tags:
+  - name: client-catalog
+    description: Каталог заведений и меню (Client API)
+  - name: client-cart
+    description: Корзина пользователя (Client API)
+  - name: client-orders
+    description: Заказы пользователя (Client API)
+  - name: partner-profile
+    description: Профиль заведения (Partner API)
+  - name: partner-menu
+    description: Меню и остатки заведения (Partner API)
+  - name: partner-orders
+    description: Обработка заказов заведением (Partner API)
+  - name: admin
+    description: Администрирование платформы
+
+paths:
+  # Client API
+  /api/v1/restaurants:
+    get:
+      operationId: listRestaurants
+      tags: [client-catalog]
+      summary: Список заведений
+      description: |
+        Каталог заведений с поиском по названию. Возвращает заведения в статусах
+        `active` и `paused`: заведение на паузе остаётся видимым, чтобы пользователь
+        нашёл знакомое место и увидел, что оно временно не принимает заказы.
+        Отключённые платформой (`disabled`) не возвращаются.
+      parameters:
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Список заведений
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestaurantList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/restaurants/{restaurantId}:
+    get:
+      operationId: getRestaurant
+      tags: [client-catalog]
+      summary: Карточка заведения
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+      responses:
+        '200':
+          description: Заведение
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Restaurant'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/restaurants/{restaurantId}/menu:
+    get:
+      operationId: getRestaurantMenu
+      tags: [client-catalog]
+      summary: Меню заведения
+      description: Категории с позициями. Недоступные позиции (`is_available=false` или нулевой остаток) возвращаются с флагом, чтобы клиент мог показать их как «нет в наличии».
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+      responses:
+        '200':
+          description: Меню
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Menu'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/cart:
+    get:
+      operationId: getCart
+      tags: [client-cart]
+      summary: Текущая корзина пользователя
+      security:
+        - UserId: []
+      responses:
+        '200':
+          description: Корзина (пустая, если пользователь ничего не добавлял)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      operationId: clearCart
+      tags: [client-cart]
+      summary: Очистить корзину
+      security:
+        - UserId: []
+      responses:
+        '204':
+          description: Корзина очищена
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/cart/items:
+    put:
+      operationId: setCartItem
+      tags: [client-cart]
+      summary: Добавить позицию или изменить её количество
+      description: |
+        Идемпотентно устанавливает количество позиции в корзине. `quantity: 0` удаляет позицию.
+        Корзина привязана к одному заведению: попытка добавить позицию другого заведения
+        возвращает `409 cart_restaurant_mismatch` - клиент должен явно очистить корзину.
+      security:
+        - UserId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CartItemInput'
+      responses:
+        '200':
+          description: Обновлённая корзина
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/orders:
+    post:
+      operationId: createOrder
+      tags: [client-orders]
+      summary: Оформить заказ из корзины
+      description: |
+        Создаёт заказ из текущей корзины в одной транзакции: проверяет доступность заведения,
+        минимальную сумму, наличие позиций и остатки, резервирует остатки, очищает корзину и
+        ставит событие `order.created` в outbox для отправки заведению.
+
+        Ошибки `409`: `cart_empty`, `restaurant_unavailable`, `min_order_amount`, `items_unavailable`
+        (в `details` - список проблемных позиций и доступное количество).
+      security:
+        - UserId: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Заказ создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    get:
+      operationId: listOrders
+      tags: [client-orders]
+      summary: Заказы пользователя
+      security:
+        - UserId: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Список заказов, новые первыми
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/orders/{orderId}:
+    get:
+      operationId: getOrder
+      tags: [client-orders]
+      summary: Заказ с историей статусов
+      security:
+        - UserId: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Заказ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/orders/{orderId}/cancel:
+    post:
+      operationId: cancelOrder
+      tags: [client-orders]
+      summary: Отменить заказ
+      description: Разрешено только в статусах `new` и `accepted`. Остатки возвращаются, заведению отправляется `order.cancelled`.
+      security:
+        - UserId: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Заказ отменён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  # Partner API
+  /partner/v1/me:
+    get:
+      operationId: partnerGetProfile
+      tags: [partner-profile]
+      summary: Профиль текущего заведения
+      security:
+        - ApiKey: []
+      responses:
+        '200':
+          description: Профиль
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestaurantProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      operationId: partnerUpdateProfile
+      tags: [partner-profile]
+      summary: Обновить профиль заведения
+      description: "Заведение может поставить себя на паузу (`status: paused`), задать `webhook_url`, стоимость доставки и минимальную сумму заказа."
+      security:
+        - ApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestaurantProfileUpdate'
+      responses:
+        '200':
+          description: Обновлённый профиль
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestaurantProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /partner/v1/menu:
+    put:
+      operationId: partnerSyncMenu
+      tags: [partner-menu]
+      summary: Полная синхронизация меню
+      description: |
+        Upsert категорий и позиций по `external_id` заведения. Позиции, отсутствующие в запросе,
+        не удаляются (на них ссылаются заказы), а помечаются `is_available=false`.
+      security:
+        - ApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MenuSyncRequest'
+      responses:
+        '200':
+          description: Результат синхронизации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuSyncResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /partner/v1/menu/items/{externalId}:
+    patch:
+      operationId: partnerUpdateMenuItem
+      tags: [partner-menu]
+      summary: Обновить доступность, остаток или цену позиции
+      security:
+        - ApiKey: []
+      parameters:
+        - $ref: '#/components/parameters/ExternalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MenuItemUpdate'
+      responses:
+        '200':
+          description: Обновлённая позиция
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /partner/v1/orders:
+    get:
+      operationId: partnerListOrders
+      tags: [partner-orders]
+      summary: Заказы заведения
+      description: Запасной канал к webhook-ам - заведение может опрашивать новые заказы (`status=new`) или изменения с момента `since`.
+      security:
+        - ApiKey: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/OrderStatus'
+        - name: since
+          in: query
+          description: Вернуть заказы, обновлённые после этого момента
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Список заказов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerOrderList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /partner/v1/orders/{orderId}:
+    get:
+      operationId: partnerGetOrder
+      tags: [partner-orders]
+      summary: Заказ заведения
+      security:
+        - ApiKey: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Заказ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerOrder'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /partner/v1/orders/{orderId}/accept:
+    post:
+      operationId: partnerAcceptOrder
+      tags: [partner-orders]
+      summary: Принять заказ
+      description: Переход `new → accepted`. Заведение может указать ожидаемое время готовности.
+      security:
+        - ApiKey: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptOrderRequest'
+      responses:
+        '200':
+          description: Заказ принят
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerOrder'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /partner/v1/orders/{orderId}/reject:
+    post:
+      operationId: partnerRejectOrder
+      tags: [partner-orders]
+      summary: Отклонить заказ
+      description: Переход `new → rejected` с указанием причины. Остатки возвращаются.
+      security:
+        - ApiKey: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectOrderRequest'
+      responses:
+        '200':
+          description: Заказ отклонён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerOrder'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /partner/v1/orders/{orderId}/status:
+    post:
+      operationId: partnerUpdateOrderStatus
+      tags: [partner-orders]
+      summary: Продвинуть заказ по жизненному циклу
+      description: |
+        Допустимые переходы строго по цепочке `accepted → cooking → ready → delivering → delivered`.
+        Недопустимый переход возвращает `409 invalid_transition`.
+      security:
+        - ApiKey: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOrderStatusRequest'
+      responses:
+        '200':
+          description: Статус обновлён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerOrder'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  # Admin API
+  /admin/v1/restaurants:
+    post:
+      operationId: adminCreateRestaurant
+      tags: [admin]
+      summary: Онбординг заведения
+      description: Создаёт заведение и выдаёт API-ключ и секрет для подписи webhook-ов. Ключ возвращается в открытом виде только в этом ответе.
+      security:
+        - AdminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRestaurantRequest'
+      responses:
+        '201':
+          description: Заведение создано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestaurantCredentials'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+components:
+  securitySchemes:
+    UserId:
+      type: apiKey
+      in: header
+      name: X-User-Id
+      description: Идентификатор пользователя (UUID). Аутентификация вне рамок MVP.
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: API-ключ заведения, выданный при онбординге.
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+      description: Статический токен администратора платформы.
+
+  parameters:
+    RestaurantId:
+      name: restaurantId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ExternalId:
+      name: externalId
+      in: path
+      required: true
+      description: Идентификатор позиции в системе заведения
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    Search:
+      name: search
+      in: query
+      description: Подстрока названия заведения (без учёта регистра)
+      schema:
+        type: string
+        maxLength: 100
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Ключ идемпотентности. Повторный запрос с тем же ключом от того же пользователя вернёт уже созданный заказ.
+      schema:
+        type: string
+        maxLength: 128
+
+  responses:
+    BadRequest:
+      description: Некорректный запрос
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Отсутствует или неверен заголовок аутентификации
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Ресурс не найден
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Бизнес-конфликт (нет остатков, недопустимый переход статуса и т. п.)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    # Общее
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Машиночитаемый код ошибки
+          example: items_unavailable
+        message:
+          type: string
+          example: Некоторые позиции недоступны
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+    ErrorDetail:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: out_of_stock
+        message:
+          type: string
+        field:
+          type: string
+          description: Поле запроса, к которому относится ошибка
+        menu_item_id:
+          type: string
+          format: uuid
+        requested_qty:
+          type: integer
+        available_qty:
+          type: integer
+
+    Pagination:
+      type: object
+      required: [page, page_size, total]
+      properties:
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+
+    Money:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Сумма в минорных единицах (копейках)
+
+    RestaurantStatus:
+      type: string
+      enum: [active, paused, disabled]
+      description: |
+        * `active` - принимает заказы
+        * `paused` - временно не принимает (выставляется заведением)
+        * `disabled` - отключено платформой
+
+    OrderStatus:
+      type: string
+      enum: [new, accepted, cooking, ready, delivering, delivered, rejected, cancelled]
+
+    # Каталог
+    Restaurant:
+      type: object
+      required: [id, slug, name, address, status, delivery_fee, min_order_amount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        address:
+          type: string
+        status:
+          $ref: '#/components/schemas/RestaurantStatus'
+        delivery_fee:
+          $ref: '#/components/schemas/Money'
+        min_order_amount:
+          $ref: '#/components/schemas/Money'
+
+    RestaurantList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Restaurant'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    MenuItem:
+      type: object
+      required: [id, external_id, name, price, is_available]
+      properties:
+        id:
+          type: string
+          format: uuid
+        external_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          $ref: '#/components/schemas/Money'
+        is_available:
+          type: boolean
+          description: Можно ли заказать прямо сейчас (учитывает и флаг заведения, и остаток)
+        stock_qty:
+          type: integer
+          nullable: true
+          description: Остаток; `null` - без учёта остатков
+        image_url:
+          type: string
+          format: uri
+
+    MenuCategory:
+      type: object
+      required: [id, name, sort_order, items]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        sort_order:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MenuItem'
+
+    Menu:
+      type: object
+      required: [restaurant_id, categories]
+      properties:
+        restaurant_id:
+          type: string
+          format: uuid
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/MenuCategory'
+
+    # Корзина 
+    CartItemInput:
+      type: object
+      required: [menu_item_id, quantity]
+      properties:
+        menu_item_id:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          minimum: 0
+          maximum: 99
+
+    CartItem:
+      type: object
+      required: [menu_item_id, name, price, quantity, is_available]
+      properties:
+        menu_item_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        price:
+          $ref: '#/components/schemas/Money'
+        quantity:
+          type: integer
+        is_available:
+          type: boolean
+          description: Актуальная доступность позиции на момент запроса
+
+    Cart:
+      type: object
+      required: [items, subtotal]
+      properties:
+        restaurant_id:
+          type: string
+          format: uuid
+          description: Отсутствует, если корзина пуста
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CartItem'
+        subtotal:
+          $ref: '#/components/schemas/Money'
+        delivery_fee:
+          $ref: '#/components/schemas/Money'
+        total:
+          $ref: '#/components/schemas/Money'
+
+    # Заказы (клиент)
+    CreateOrderRequest:
+      type: object
+      required: [delivery_address]
+      properties:
+        delivery_address:
+          type: string
+          minLength: 5
+          maxLength: 500
+        comment:
+          type: string
+          maxLength: 1000
+
+    OrderItem:
+      type: object
+      required: [menu_item_id, name, price, quantity]
+      properties:
+        menu_item_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: Название на момент заказа
+        price:
+          $ref: '#/components/schemas/Money'
+        quantity:
+          type: integer
+
+    OrderStatusChange:
+      type: object
+      required: [from_status, to_status, actor, created_at]
+      properties:
+        from_status:
+          type: string
+          nullable: true
+        to_status:
+          $ref: '#/components/schemas/OrderStatus'
+        actor:
+          type: string
+          enum: [user, restaurant, system]
+        reason:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Order:
+      type: object
+      required: [id, number, restaurant_id, restaurant_name, status, items, delivery_address, subtotal, delivery_fee, total, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: integer
+          format: int64
+          description: Человекочитаемый номер заказа
+        restaurant_id:
+          type: string
+          format: uuid
+        restaurant_name:
+          type: string
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        delivery_address:
+          type: string
+        comment:
+          type: string
+        subtotal:
+          $ref: '#/components/schemas/Money'
+        delivery_fee:
+          $ref: '#/components/schemas/Money'
+        total:
+          $ref: '#/components/schemas/Money'
+        reject_reason:
+          type: string
+        expected_at:
+          type: string
+          format: date-time
+          description: Ожидаемое время готовности, если заведение его указало
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderStatusChange'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    OrderList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # Партнёр: профиль
+    RestaurantProfile:
+      allOf:
+        - $ref: '#/components/schemas/Restaurant'
+        - type: object
+          properties:
+            webhook_url:
+              type: string
+              format: uri
+              nullable: true
+            created_at:
+              type: string
+              format: date-time
+
+    RestaurantProfileUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [active, paused]
+        webhook_url:
+          type: string
+          format: uri
+          nullable: true
+        delivery_fee:
+          $ref: '#/components/schemas/Money'
+        min_order_amount:
+          $ref: '#/components/schemas/Money'
+        description:
+          type: string
+
+    # Партнёр: меню
+    MenuSyncItem:
+      type: object
+      required: [external_id, name, price]
+      properties:
+        external_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 1000
+        price:
+          $ref: '#/components/schemas/Money'
+        is_available:
+          type: boolean
+          default: true
+        stock_qty:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: Остаток; `null` или отсутствие поля - без учёта остатков
+        image_url:
+          type: string
+          format: uri
+
+    MenuSyncCategory:
+      type: object
+      required: [name, items]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        sort_order:
+          type: integer
+          default: 0
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MenuSyncItem'
+
+    MenuSyncRequest:
+      type: object
+      required: [categories]
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/MenuSyncCategory'
+
+    MenuSyncResult:
+      type: object
+      required: [categories_total, items_created, items_updated, items_disabled]
+      properties:
+        categories_total:
+          type: integer
+        items_created:
+          type: integer
+        items_updated:
+          type: integer
+        items_disabled:
+          type: integer
+          description: Позиции, отсутствовавшие в запросе и помеченные недоступными
+
+    MenuItemUpdate:
+      type: object
+      properties:
+        is_available:
+          type: boolean
+        stock_qty:
+          type: integer
+          minimum: 0
+          nullable: true
+        price:
+          $ref: '#/components/schemas/Money'
+
+    # Партнёр: заказы
+    PartnerOrder:
+      type: object
+      required: [id, number, status, items, delivery_address, subtotal, delivery_fee, total, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: integer
+          format: int64
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartnerOrderItem'
+        delivery_address:
+          type: string
+        comment:
+          type: string
+        customer:
+          $ref: '#/components/schemas/OrderCustomer'
+        subtotal:
+          $ref: '#/components/schemas/Money'
+        delivery_fee:
+          $ref: '#/components/schemas/Money'
+        total:
+          $ref: '#/components/schemas/Money'
+        reject_reason:
+          type: string
+        expected_at:
+          type: string
+          format: date-time
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderStatusChange'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PartnerOrderItem:
+      allOf:
+        - $ref: '#/components/schemas/OrderItem'
+        - type: object
+          required: [external_id]
+          properties:
+            external_id:
+              type: string
+              description: Идентификатор позиции в системе заведения
+
+    OrderCustomer:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        phone:
+          type: string
+
+    PartnerOrderList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartnerOrder'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    AcceptOrderRequest:
+      type: object
+      properties:
+        expected_at:
+          type: string
+          format: date-time
+
+    RejectOrderRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+
+    UpdateOrderStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [cooking, ready, delivering, delivered]
+
+    # Admin
+    CreateRestaurantRequest:
+      type: object
+      required: [slug, name, address]
+      properties:
+        slug:
+          type: string
+          pattern: '^[a-z0-9-]{3,64}$'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+        address:
+          type: string
+        delivery_fee:
+          $ref: '#/components/schemas/Money'
+        min_order_amount:
+          $ref: '#/components/schemas/Money'
+
+    RestaurantCredentials:
+      type: object
+      required: [restaurant, api_key, webhook_secret]
+      properties:
+        restaurant:
+          $ref: '#/components/schemas/RestaurantProfile'
+        api_key:
+          type: string
+          description: Показывается один раз, хранится в виде хеша
+        webhook_secret:
+          type: string
+          description: Секрет для проверки подписи webhook-ов
+
+    # Webhook
+    WebhookEvent:
+      type: object
+      description: Тело `POST {webhook_url}`, которое платформа отправляет заведению.
+      required: [event_id, type, occurred_at, order]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: Уникальный идентификатор события для дедупликации
+        type:
+          type: string
+          enum: [order.created, order.cancelled]
+        occurred_at:
+          type: string
+          format: date-time
+        order:
+          $ref: '#/components/schemas/PartnerOrder'
