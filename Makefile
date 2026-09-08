@@ -10,7 +10,7 @@ PY := $(PY_VENV)/bin/python
 .PHONY: help build run test lint lint-go lint-py fmt generate diagrams up down logs smoke py-venv
 
 help: # Список целей
-	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?# ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?# "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 build: # Собрать бинарник kitchen
 	go build -o bin/kitchen ./cmd/kitchen
