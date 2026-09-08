@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     http_port: int = 8090
     kitchen_base_url: str = "http://localhost:8080"
     api_key: str = "demo-restaurant-key"
+    webhook_secret: str = "demo-webhook-secret"  # noqa: S105
     public_url: str = "http://localhost:8090"
     auto_accept: bool = True
     simulation_step_seconds: float = 5.0
