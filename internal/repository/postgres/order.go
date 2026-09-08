@@ -104,6 +104,11 @@ func (r *OrderRepo) Create(ctx context.Context, cart domain.Cart, input domain.C
 		return domain.Order{}, err
 	}
 
+	// Событие пишется в той же транзакции, что и заказ
+	if err := enqueueEvent(ctx, tx, domain.WebhookOrderCreated, order); err != nil {
+		return domain.Order{}, err
+	}
+
 	if _, err := tx.Exec(ctx, "DELETE FROM carts WHERE id = $1", cart.ID); err != nil {
 		return domain.Order{}, fmt.Errorf("clear cart: %w", err)
 	}
@@ -426,6 +431,15 @@ func (r *OrderRepo) ChangeStatus(ctx context.Context, id uuid.UUID, change domai
 	if err != nil {
 		return domain.Order{}, err
 	}
+
+	// Об отмене заведение узнаёт из webhook-а
+	// Об отказе не уведомляем, его инициирует само заведение
+	if change.To == domain.OrderCancelled {
+		if err := enqueueEvent(ctx, tx, domain.WebhookOrderCancelled, order); err != nil {
+			return domain.Order{}, err
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return domain.Order{}, fmt.Errorf("commit status tx: %w", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/config"
+	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/outbox"
 	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/repository/postgres"
 	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/service/cart"
 	"github.com/talense-tasks/backend-trainee-assignment-autumn-2026-flow-2-damakalshchikov-3b6ddaba/internal/service/catalog"
@@ -57,6 +58,14 @@ func run() error {
 	menuRepo := postgres.NewMenuRepo(pool)
 	cartRepo := postgres.NewCartRepo(pool)
 	orderRepo := postgres.NewOrderRepo(pool)
+	outboxRepo := postgres.NewOutboxRepo(pool)
+
+	worker := outbox.New(outboxRepo, logger, outbox.Config{PollInterval: cfg.OutboxPollInterval})
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		worker.Run(ctx)
+	}()
 
 	handler := httptransport.NewRouter(httptransport.Deps{
 		Logger: logger,
@@ -95,6 +104,12 @@ func run() error {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("http shutdown: %w", err)
+	}
+
+	select {
+	case <-workerDone:
+	case <-shutdownCtx.Done():
+		logger.Warn("outbox worker did not stop in time")
 	}
 	return nil
 }
