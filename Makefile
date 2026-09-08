@@ -7,10 +7,10 @@ endif
 PY_VENV := restaurant/.venv
 PY := $(PY_VENV)/bin/python
 
-.PHONY: help build run test lint lint-go lint-py fmt generate diagrams up down logs smoke py-venv
+.PHONY: help build run test lint lint-go lint-py fmt generate diagrams up down logs e2e py-venv
 
 help: # Список целей
-	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?# ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?# "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 build: # Собрать бинарник kitchen
 	go build -o bin/kitchen ./cmd/kitchen
@@ -51,6 +51,8 @@ down: # Остановить стек и удалить данные
 logs: # Логи стека
 	docker compose logs -f kitchen restaurant
 
+e2e: # Сквозная проверка сценариев против поднятого стека
+	./scripts/e2e.sh
 
 py-venv: # Создать venv для сервиса заведения с dev-зависимостями
 	python3 -m venv $(PY_VENV)
